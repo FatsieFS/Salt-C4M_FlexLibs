@@ -323,8 +323,8 @@ class _Clamp(_cell._FactoryCell):
             )
             chact_bounds = l_ch.bounds(mask=diode.wire.mask)
             dgate = ckt.instantiate(diode, name="DGATE",
-                width=(chact_bounds.right - chact_bounds.left),
-                height=(chact_bounds.top - chact_bounds.bottom),
+                width=max(chact_bounds.right - chact_bounds.left, diode.min_width),
+                height=max(chact_bounds.top - chact_bounds.bottom, diode.min_width),
             )
             an = dgate.ports.anode
             cath = dgate.ports.cathode
@@ -721,6 +721,7 @@ class _Secondary(_cell._FactoryCell):
         )
         dnchact_bounds = l_ch.bounds(mask=comp.active.mask)
         diode_width = dnchact_bounds.right - dnchact_bounds.left
+        assert diode_width > (dn_prim.min_width - _geo.epsilon)
         dn = ckt.instantiate(
             dn_prim, name="DN", width=diode_width, height=diode_height,
         )
@@ -784,6 +785,7 @@ class _Secondary(_cell._FactoryCell):
         )
         dpchact_bounds = l_ch.bounds(mask=comp.active.mask)
         diode2_height = dpchact_bounds.top - dpchact_bounds.bottom
+        assert diode2_height > (dn_prim.min_width - _geo.epsilon)
         dp = ckt.instantiate(
             dp_prim, name="DP", width=diode2_width, height=diode2_height,
         )

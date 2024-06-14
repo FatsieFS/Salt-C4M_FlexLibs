@@ -1905,12 +1905,13 @@ class _IOCellFrame:
             )
             layouter.add_wire(wire=metal2, net=pad, shape=shape)
 
-            y = bb.top
-            layouter.add_wire(
-                net=pad, wire=via1, y=y,
-                bottom_left=shape.left, bottom_right=shape.right, bottom_enclosure="tall",
-                top_left=shape.left, top_right=shape.right, top_enclosure="tall",
-            )
+            if pad == nets["iovdd"]:
+                y = bb.top
+                layouter.add_wire(
+                    net=pad, wire=via1, y=y,
+                    bottom_left=shape.left, bottom_right=shape.right, bottom_enclosure="tall",
+                    top_left=shape.left, top_right=shape.right, top_enclosure="tall",
+                )
 
         # Draw guardring around pad and connect to iovdd track
         bottom = cast(_geo._Rectangular, l_nclamp.boundary).top
@@ -1993,10 +1994,26 @@ class _IOCellFrame:
             l = layouter.place(_l, x=x, y=y)
             m2bb2 = l.bounds(mask=metal2.mask)
 
-            shape = _geo.Rect.from_rect(rect=m2bb1, top=m2bb2.top)
-            layouter.add_wire(
-                net=net, wire=metal2, shape=shape,
-            )
+            w = m2bb1.width
+            max_pitch = self.tracksegment_maxpitch
+            # Take space from M3
+            space = comp.track_metalspecs[0].tracksegment_space
+            fingers = floor((w + space + _geo.epsilon)/max_pitch) + 1
+            pitch = tech.on_grid(w/fingers, mult=2, rounding="floor")
+            w_finger = pitch - space
+            bottom = m2bb1.bottom
+            top = m2bb2.top
+            for n in range(fingers):
+                if n < fingers - 1:
+                    left = m2bb1.left + n*pitch
+                    right = left + w_finger
+                else:
+                    right = m2bb1.right
+                    left = right - w_finger
+                shape = _geo.Rect(left=left, bottom=bottom, right=right, top=top)
+                layouter.add_wire(
+                    net=net, wire=metal2, shape=shape,
+                )
         else: # pragma: no cover
             raise NotImplementedError(f"net '{net.name} for RCClampInverter supply")
 
