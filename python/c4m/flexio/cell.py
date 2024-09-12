@@ -267,6 +267,8 @@ class _IOCellFrame:
         via2 = comp.vias[2]
         metal3 = comp.metal[3].prim
 
+        iopmos = comp.iopmos
+
         iovdd_trackspec = frame.track_specs["iovdd"]
 
         layout = layouter.layout
@@ -332,7 +334,30 @@ class _IOCellFrame:
         # acttrack
         acttrack_segs = frame._track_segments["actiovdd"]
 
-        for seg in acttrack_segs:
+        nw_enc = iopmos.computed.min_active_well_enclosure.max()
+        def extend_nwell(*,
+            n: int, l: "_lay.LayoutT", bottom: bool, top: bool,
+        ):
+            nw_bb = l.bounds(mask=nwell.mask)
+            args: Dict[str, float] = {}
+            if bottom:
+                seg1 = acttrack_segs[n - 1]
+                seg2 = acttrack_segs[n]
+                edge = 0.5*(seg1.top + seg2.bottom)
+                if nw_bb.bottom > (edge + _geo.epsilon):
+                    args["bottom"] = edge
+            if top:
+                seg1 = acttrack_segs[n]
+                seg2 = acttrack_segs[n + 1]
+                edge = 0.5*(seg1.top + seg2.bottom)
+                if nw_bb.top < (edge - _geo.epsilon):
+                    args["top"] = edge
+            if args:
+                shape = _geo.Rect.from_rect(rect=nw_bb, **args)
+                layouter.add_wire(net=net, wire=nwell, shape=shape)
+
+        n_segs = len(acttrack_segs)
+        for n, seg in enumerate(acttrack_segs):
             # Don't draw if it overlaps with pdio
             if (pdio_actbb is not None) and ((pdio_actbb.bottom - _geo.epsilon) < seg.top):
                 continue
@@ -343,12 +368,13 @@ class _IOCellFrame:
                     shape = _geo.Rect(
                         left=0.0, bottom=seg.bottom, right=cell_width, top=seg.top,
                     )
-                    layouter.add_wire(
+                    l = layouter.add_wire(
                         net=net, wire=contact, space=frame.trackconn_chspace,
                         well_net=net,
                         bottom=active, bottom_well=nwell, bottom_extra=spec.iovdd_ntap_extra,
                         bottom_enclosure=actenc, bottom_shape=shape, top_shape=shape,
                     )
+                    extend_nwell(n=n, l=l, bottom=(n > 0), top=(n < (n_segs - 1)))
                 else:
                     # ndio is on left
                     if (seg.bottom -_geo.epsilon) < ndio_actbb.top:
@@ -357,43 +383,47 @@ class _IOCellFrame:
                                 left=ndio_actbb.right, bottom=seg.bottom,
                                 right=cell_width, top=seg.top,
                             )
-                            layouter.add_wire(
+                            l = layouter.add_wire(
                                 net=net, wire=contact, space=frame.trackconn_chspace,
                                 well_net=net,
                                 bottom=active, bottom_well=nwell, bottom_extra=spec.iovdd_ntap_extra,
                                 bottom_enclosure=actenc, bottom_shape=shape, top_shape=shape,
                             )
+                            extend_nwell(n=n, l=l, bottom=(n > 0), top=(n < (n_segs - 1)))
                         else:
                             shape = _geo.Rect(
                                 left=ndio_actbb.right, bottom=seg.bottom,
                                 right=cell_width, top=ndio_actbb.top,
                             )
-                            layouter.add_wire(
+                            l = layouter.add_wire(
                                 net=net, wire=contact, space=frame.trackconn_chspace,
                                 well_net=net,
                                 bottom=active, bottom_well=nwell, bottom_extra=spec.iovdd_ntap_extra,
                                 bottom_enclosure=actenc, bottom_shape=shape, top_shape=shape,
                             )
+                            extend_nwell(n=n, l=l, bottom=(n > 0), top=False)
                             shape = _geo.Rect(
                                 left=0.0, bottom=ndio_actbb.top,
                                 right=cell_width, top=seg.top,
                             )
-                            layouter.add_wire(
+                            l = layouter.add_wire(
                                 net=net, wire=contact, space=frame.trackconn_chspace,
                                 well_net=net,
                                 bottom=active, bottom_well=nwell, bottom_extra=spec.iovdd_ntap_extra,
                                 bottom_enclosure=actenc, bottom_shape=shape, top_shape=shape,
                             )
+                            extend_nwell(n=n, l=l, bottom=False, top=(n < (n_segs - 1)))
                     else:
                         shape = _geo.Rect(
                             left=0.0, bottom=seg.bottom, right=cell_width, top=seg.top,
                         )
-                        layouter.add_wire(
+                        l = layouter.add_wire(
                             net=net, wire=contact, space=frame.trackconn_chspace,
                             well_net=net,
                             bottom=active, bottom_well=nwell, bottom_extra=spec.iovdd_ntap_extra,
                             bottom_enclosure=actenc, bottom_shape=shape, top_shape=shape,
                         )
+                        extend_nwell(n=n, l=l, bottom=(n > 0), top=(n < (n_segs - 1)))
             else:
                 if pclamp_actbb is None:
                     # This is now for _PadIOVdd and no track is to be drawn now
@@ -405,12 +435,13 @@ class _IOCellFrame:
                                 left=0.0, bottom=nclamp_actbb.top,
                                 right=cell_width, top=seg.top,
                             )
-                            layouter.add_wire(
+                            l = layouter.add_wire(
                                 net=net, wire=contact, space=frame.trackconn_chspace,
                                 well_net=net,
                                 bottom=active, bottom_well=nwell, bottom_extra=spec.iovdd_ntap_extra,
                                 bottom_enclosure=actenc, bottom_shape=shape, top_shape=shape,
                             )
+                            extend_nwell(n=n, l=l, bottom=False, top=(n < (n_segs - 1)))
                         else:
                             # Don't draw
                             pass
@@ -419,12 +450,13 @@ class _IOCellFrame:
                                 left=0.0, bottom=seg.bottom,
                                 right=cell_width, top=seg.top,
                             )
-                            layouter.add_wire(
+                            l = layouter.add_wire(
                                 net=net, wire=contact, space=frame.trackconn_chspace,
                                 well_net=net,
                                 bottom=active, bottom_well=nwell, bottom_extra=spec.iovdd_ntap_extra,
                                 bottom_enclosure=actenc, bottom_shape=shape, top_shape=shape,
                             )
+                            extend_nwell(n=n, l=l, bottom=(n > 0), top=(n < (n_segs - 1)))
                 else:
                     if (seg.bottom -_geo.epsilon) < nclamp_actbb.top:
                         if (ndio_actbb.top + _geo.epsilon) > seg.top:
@@ -432,22 +464,24 @@ class _IOCellFrame:
                                 left=0.0, bottom=nclamp_actbb.top,
                                 right=ndio_actbb.left, top=seg.top,
                             )
-                            layouter.add_wire(
+                            l = layouter.add_wire(
                                 net=net, wire=contact, space=frame.trackconn_chspace,
                                 well_net=net,
                                 bottom=active, bottom_well=nwell, bottom_extra=spec.iovdd_ntap_extra,
                                 bottom_enclosure=actenc, bottom_shape=shape, top_shape=shape,
                             )
+                            extend_nwell(n=n, l=l, bottom=False, top=(n < (n_segs - 1)))
                             shape = _geo.Rect(
                                 left=ndio_actbb.right, bottom=nclamp_actbb.top,
                                 right=cell_width, top=seg.top,
                             )
-                            layouter.add_wire(
+                            l = layouter.add_wire(
                                 net=net, wire=contact, space=frame.trackconn_chspace,
                                 well_net=net,
                                 bottom=active, bottom_well=nwell, bottom_extra=spec.iovdd_ntap_extra,
                                 bottom_enclosure=actenc, bottom_shape=shape, top_shape=shape,
                             )
+                            extend_nwell(n=n, l=l, bottom=False, top=(n < (n_segs - 1)))
                         else:
                             shape = _geo.Rect(
                                 left=0.0, bottom=nclamp_actbb.top,
@@ -473,12 +507,13 @@ class _IOCellFrame:
                                 left=0.0, bottom=ndio_actbb.top,
                                 right=cell_width, top=seg.top,
                             )
-                            layouter.add_wire(
+                            l = layouter.add_wire(
                                 net=net, wire=contact, space=frame.trackconn_chspace,
                                 well_net=net,
                                 bottom=active, bottom_well=nwell, bottom_extra=spec.iovdd_ntap_extra,
                                 bottom_enclosure=actenc, bottom_shape=shape, top_shape=shape,
                             )
+                            extend_nwell(n=n, l=l, bottom=False, top=(n < (n_segs - 1)))
 
         # Draw extra connection on left and right
         acttrack_bottom = acttrack_segs[0].bottom
@@ -815,21 +850,30 @@ class _IOCellFrame:
                     )
             # iovdd
             net = nets.iovdd
+            nws = []
             for segment in self._track_segments["actiovdd"]:
                 shape = _geo.Rect(left=0.0, bottom=segment.bottom, right=cell_width, top=segment.top)
                 if cell_width <= 4*ch_pitch:
-                    layouter.add_wire(
+                    l = layouter.add_wire(
                         net=net, wire=active, implant=nimplant, well=nwell, well_net=net,
                         extra=spec.iovdd_ntap_extra, shape=shape,
                     )
+                    nws.append(l.bounds(mask=nwell.mask))
                     layouter.add_wire(net=net, wire=metal1, shape=shape)
                 else:
-                    layouter.add_wire(
+                    l = layouter.add_wire(
                         net=net, wire=contact, well_net=net, space=ch_space,
                         bottom=active, bottom_implant=nimplant, bottom_well=nwell,
                         bottom_enclosure=enc, bottom_extra=spec.iovdd_ntap_extra,
                         bottom_shape=shape, top_shape=shape,
                     )
+                    nws.append(l.bounds(mask=nwell.mask))
+            left = min(r.left for r in nws)
+            bottom = min(r.bottom for r in nws)
+            right = max(r.right for r in nws)
+            top = max(r.top for r in nws)
+            shape = _geo.Rect(left=left, bottom=bottom, right=right, top=top)
+            layouter.add_wire(net=net, wire=nwell, shape=shape)
 
     def draw_corner_tracks(self, *,
         ckt: _ckt._Circuit, layouter: _lay.CircuitLayouterT,

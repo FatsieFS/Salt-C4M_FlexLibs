@@ -124,7 +124,7 @@ class IOSpecification:
         corerow_height: float, corerow_nwell_height: float,
         iorow_height: float, iorow_nwell_height: float,
         nwell_minspace: Optional[float]=None, levelup_core_space: float,
-        resvdd_prim: Optional[_prm.Resistor]=None, resvdd_meander: bool=True,
+        resvdd_prim: Optional[_prm.Resistor]=None,
         resvdd_w: Optional[float]=None, resvdd_space: Optional[float]=None,
         resvdd_lfinger: Optional[float]=None, resvdd_fingers: Optional[int]=None,
         capvdd_l: Optional[float]=None, capvdd_w: Optional[float]=None, capvdd_rows: int=1,
@@ -260,7 +260,6 @@ class IOSpecification:
             if capvdd_mosfet is None:
                 capvdd_mosfet = invvdd_n_mosfet
         self.resvdd_prim = resvdd_prim
-        self.resvdd_meander = resvdd_meander
         self.resvdd_w = resvdd_w
         self.resvdd_space = resvdd_space
         self.resvdd_lfinger = resvdd_lfinger
@@ -466,7 +465,8 @@ class _ComputedSpecs:
 
         assert active.oxide is not None
         assert active.min_oxide_enclosure is not None
-        assert active.min_substrate_enclosure is not None
+        assert nmos.computed.min_active_substrate_enclosure is not None
+        assert ionmos.computed.min_active_substrate_enclosure is not None
 
         # Following code assumes that either (io)nmos or (io)pmos transistor have implants
         # We also use the first implant of a MOSFET as the main implant layer
@@ -801,8 +801,8 @@ class _ComputedSpecs:
         self.nwell = nwell = pmos.well
         nwellidx = active.well.index(nwell)
 
-        nactenc = active.min_substrate_enclosure.max()
-        pactenc = active.min_well_enclosure[nwellidx].max()
+        nactenc = nmos.computed.min_active_substrate_enclosure.max()
+        pactenc = pmos.computed.min_active_well_enclosure.max()
         try:
             s = tech.computed.min_space(active, contact)
         except AttributeError:
@@ -826,7 +826,10 @@ class _ComputedSpecs:
         self.activenwell_minspace = nactenc
         self.activenwell_minenclosure = pactenc
 
-        ionactenc = nactenc
+        ionactenc = max(
+            nactenc,
+            ionmos.computed.min_active_substrate_enclosure.max(),
+        )
         if ionmos.min_gateimplant_enclosure:
             ionactenc = max(ionactenc, ionmos.min_gateimplant_enclosure[0].second)
         if pimplant is not None:
@@ -836,7 +839,10 @@ class _ComputedSpecs:
                 pass
             else:
                 ionactenc = max(ionactenc, s)
-        iopactenc = pactenc
+        iopactenc = max(
+            pactenc,
+            iopmos.computed.min_active_well_enclosure.max(),
+        )
         if iopmos.min_gateimplant_enclosure:
             iopactenc = max(iopactenc, iopmos.min_gateimplant_enclosure[0].second)
         if nimplant is not None:

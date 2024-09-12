@@ -65,7 +65,6 @@ class _Cell(_fab.FactoryCell["_scfab.StdCellFactory"]):
         canvas = self.canvas
         nwell = canvas._nwell
         pwell = canvas._pwell
-        assert pwell is None
         metal1 = canvas._metal1
         metal1pin = canvas._metal1pin
         ckt = self.circuit
@@ -94,13 +93,14 @@ class _Cell(_fab.FactoryCell["_scfab.StdCellFactory"]):
             left=left, bottom=bottom, right=right, top=top,
         ))
 
-        left = -canvas._min_active_well_enclosure
-        bottom = canvas._well_edge_height
-        right = width + canvas._min_active_well_enclosure
-        top = canvas._cell_height + canvas._min_active_well_enclosure
-        layouter.add_wire(net=net, wire=nwell, shape=_geo.Rect(
-            left=left, bottom=bottom, right=right, top=top,
-        ))
+        if nwell is not None:
+            left = -canvas._min_active_nwell_enclosure
+            bottom = canvas._well_edge_height
+            right = width + canvas._min_active_nwell_enclosure
+            top = canvas._cell_height + canvas._min_active_nwell_enclosure
+            layouter.add_wire(net=net, wire=nwell, shape=_geo.Rect(
+                left=left, bottom=bottom, right=right, top=top,
+            ))
 
         # vss
         net = ckt.nets["vss"]
@@ -111,6 +111,15 @@ class _Cell(_fab.FactoryCell["_scfab.StdCellFactory"]):
         layouter.add_wire(net=net, wire=metal1, pin=metal1pin, shape=_geo.Rect(
             left=left, bottom=bottom, right=right, top=top,
         ))
+
+        if pwell is not None:
+            left = -canvas._min_active_well_enclosure
+            bottom = -canvas._min_active_well_enclosure
+            right = width + canvas._min_active_well_enclosure
+            top = canvas._well_edge_height
+            layouter.add_wire(net=net, wire=pwell, shape=_geo.Rect(
+                left=left, bottom=bottom, right=right, top=top,
+            ))
 
         # boundary
         layouter.layout.boundary = bnd = _geo.Rect(

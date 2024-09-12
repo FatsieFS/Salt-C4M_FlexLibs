@@ -40,6 +40,11 @@ class StdCellCanvas:
             One value can be given for all inside layers or a value for each
             inside layer. By default 0 enclosure is taken and the shape of the
             drawn layers is the cell boundary box.
+        min_m1_space: Provide custom Metal1 spacing.
+            Currently implementation of the compaction may violate width
+            independent Metal1 spacing rules. This options allows to give
+            global minimum space that avoids these violations. Unfortunately
+            this is global parameter and increases spacing everywhere.
     """
     def __init__(self, *,
         tech: _tch.Technology,
@@ -55,6 +60,7 @@ class StdCellCanvas:
         pimplant: Optional[_prm.Implant]=None,
         inside: OptMultiT[_prm.DesignMaskPrimitiveT]=None,
         inside_enclosure: OptMultiT[_prp.Enclosure]=None,
+        min_m1_space: Optional[float]=None,
     ):
         if nmos not in tech.primitives:
             raise ValueError(
@@ -148,7 +154,8 @@ class StdCellCanvas:
         if nwell is None:
             raise NotImplementedError("pmos not in a well")
         self._nwell: _prm.Well = nwell
-        self._pwell: Optional[_prm.Well] = nmos.well
+        pwell = nmos.well
+        self._pwell: Optional[_prm.Well] = pwell
 
         self._active = active = nmos.gate.active
         if active != pmos.gate.active:
@@ -156,7 +163,15 @@ class StdCellCanvas:
                 "Different active wire for nmos and pmos transistor"
             )
         idx = active.well.index(nwell)
-        self._min_active_well_enclosure = active.min_well_enclosure[idx].max()
+        self._min_active_nwell_enclosure = pmos.computed.min_active_well_enclosure.max()
+        if pwell is not None:
+            s = nmos.computed.min_active_well_enclosure.max()
+        elif nmos.computed.min_active_substrate_enclosure is not None:
+            s = nmos.computed.min_active_substrate_enclosure.max()
+        else:
+            s = tech.computed.min_space(primitive1=active, primitive2=nwell)
+        self._min_active_nwell_space: float = s
+
         self._poly = poly = nmos.gate.poly
         if poly != pmos.gate.poly:
             raise NotImplementedError(
@@ -166,20 +181,32 @@ class StdCellCanvas:
         vs = [active.min_space]
         if inside is not None:
             for in_ in inside:
+                ins = active.in_(in_)
                 try:
-                    s = tech.computed.min_space(active.in_(in_))
+                    s = tech.computed.min_space(ins)
                 except:
                     pass
                 else:
                     vs.append(s)
         self._min_active_space = max(vs)
+        vs = [active.min_width]
+        if inside is not None:
+            ins = active.in_(inside)
+            try:
+                w = tech.computed.min_width(ins)
+            except:
+                pass
+            else:
+                vs.append(w)
+        self._min_active_width = max(vs)
 
         self._min_active_poly_space = tech.computed.min_space(active, poly)
 
-        self._nactive = nactive = active if nimplant is None else active.in_(nimplant)
-        self._pactive = pactive = active if pimplant is None else active.in_(pimplant)
+        ins = () if inside is None else inside
+        self._nactive = nactive = active if nimplant is None else active.in_((nimplant, *ins))
+        self._pactive = pactive = active if pimplant is None else active.in_((pimplant, *ins))
 
-        self._min_nactive_pactive_space = tech.computed.min_space(nactive, pactive)
+        self._min_nactive_pactive_space = v = tech.computed.min_space(nactive, pactive)
         self._min_nactive_pactive_space_maxenc = tech.computed.min_space(
             nactive, pactive, max_enclosure=True,
         )
@@ -241,7 +268,12 @@ class StdCellCanvas:
         # TODO: See if it can be done with drawing implants over pads
         idx = cont.bottom.index(poly)
         polyenc = cont.min_bottom_enclosure[idx].min()
-        for impl in (nimplant, pimplant):
+        def get_implants():
+            if nimplant is not None:
+                yield nimplant
+            if pimplant is not None:
+                yield pimplant
+        for impl in get_implants():
             try:
                 s = tech.computed.min_space(
                     primitive1=cont.in_(poly), primitive2=impl,
@@ -305,6 +337,26 @@ class StdCellCanvas:
             )
         self._metal3 = metal3
         self._metal3pin = metal3.pin
+
+        # Custom minimum spacing rules. Width dependent rules may need a non-minimal metal1
+        # space; this includes normal width contacted width and the DC rails
+        w_m1 = max(
+            tech.computed.min_width(metal1, down=True, up=False, min_enclosure=False),
+            tech.computed.min_width(metal1, down=True, up=True, min_enclosure=True),
+        )
+        self.min_m1_space = min_m1_space = (
+            min_m1_space
+            if min_m1_space is not None
+            else tech.computed.min_space(metal1, width=w_m1)
+        )
+        self._min_m1vssrail_space = max(
+            min_m1_space,
+            tech.computed.min_space(metal1, width=2*m1_vssrail_width),
+        )
+        self._min_m1vddrail_space = max(
+            min_m1_space,
+            tech.computed.min_space(metal1, width=2*m1_vddrail_width),
+        )
 
         enc = via1.min_bottom_enclosure[0].min()
         self._pin_width = tech.computed.min_width(

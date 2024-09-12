@@ -879,7 +879,6 @@ class _RCClampResistor(_cell._FactoryCell):
         l_finger = spec.resvdd_lfinger
         fingers = spec.resvdd_fingers
         space = spec.resvdd_space
-        is_meander = spec.resvdd_meander
 
         assert (
             (res_prim is not None) and (w is not None)
@@ -907,144 +906,47 @@ class _RCClampResistor(_cell._FactoryCell):
         layouter = self.new_circuitlayouter()
         layout = layouter.layout
 
-        if is_meander:
-            if len(res_prim.indicator) != 1:
-                raise NotImplementedError(
-                    "Meander resistor layout for Resistor with multiple indicators"
-                )
-            indicator = res_prim.indicator[0]
-
-            # TODO: draw real resistor, currently just the wire is drawn
-            coords1: List[_geo.Point] = []
-            coords2: List[_geo.Point] = []
-
-            _l = layouter.wire_layout(
-                net=pin1, wire=contact, bottom=wire,
-                bottom_height=w, bottom_enclosure="tall",
-                top_enclosure="tall",
-            )
-            _ch_chbb = _l.bounds(mask=contact.mask)
-            _ch_wirebb = _l.bounds(mask=wire.mask)
-            x = min(
-                -contact_space - _ch_chbb.right,
-                -_ch_wirebb.right,
-            )
-            y = -_ch_wirebb.bottom
-            l = layouter.place(_l, x=x, y=y)
-            ch_wirebb = l.bounds(mask=wire.mask)
-            ch_metalbb = l.bounds(mask=metal.mask)
-
-            if ch_wirebb.right < -_geo.epsilon:
-                shape = _geo.Rect.from_rect(rect=ch_wirebb, right=0.0)
-                layouter.add_wire(net=pin1, wire=wire, shape=shape)
-            if (metal.min_area is None) or (ch_metalbb.area + _geo.epsilon) > metal.min_area:
-                shape=ch_metalbb
+        x = 0.0
+        prev_conn_net = pin1
+        prev_conn_mbb = None
+        for i in range(fingers):
+            if i == (fingers - 1):
+                conn_net = pin2
             else:
-                width = tech.on_grid(metal.min_area/ch_metalbb.height, mult=2, rounding="ceiling")
-                shape = _geo.Rect.from_rect(rect=ch_metalbb, right=(ch_metalbb.left + width))
-            layouter.add_wire(net=pin1, wire=metal, pin=metalpin, shape=shape)
-
-            coords1.extend((_geo.origin, _geo.Point(x=0.0, y=w)))
-            coords2.append(_geo.origin)
-
-            if fingers%2 != 0:
-                raise NotImplementedError("Odd value for resvdd_fingers")
-            for f in range(fingers//2):
-                left = 2*f*pitch
-                coords1.extend((
-                    _geo.Point(x=(left + space), y=w),
-                    _geo.Point(x=(left + space), y=l_finger),
-                    _geo.Point(x=(left + 2*pitch), y=l_finger),
-                    _geo.Point(x=(left + 2*pitch), y=w),
-                ))
-                coords2.extend((
-                    _geo.Point(x=(left + pitch), y=0.0),
-                    _geo.Point(x=(left + pitch), y=(l_finger - w)),
-                    _geo.Point(x=(left + pitch + space), y=(l_finger - w)),
-                    _geo.Point(x=(left + pitch + space), y=0.0),
-                ))
-            endp = coords1[-1]
-            coords1[-1] = _geo.Point.from_point(point=endp, y=0.0)
-
-            meander = _geo.Polygon(points=(*coords1, *reversed(coords2)))
-            ms = _geo.MaskShape(mask=wire.mask, shape=meander)
-            layout.add_shape(net=res, shape=ms)
-            ms = _geo.MaskShape(mask=indicator.mask, shape=meander)
-            layout.add_shape(net=None, shape=ms)
-
-            _l = layouter.wire_layout(
-                net=pin2, wire=contact, bottom=wire,
-                bottom_height=w, bottom_enclosure="tall",
-                top_enclosure="tall",
+                conn_net = ckt.new_net(name=f"conn_{i}_{i+1}", external=False)
+            res_inst = ckt.instantiate(
+                res_prim, name=f"res_fing[{i}]",
+                width=spec.resvdd_w, length=spec.resvdd_lfinger,
             )
-            _ch_chbb = _l.bounds(mask=contact.mask)
-            _ch_wirebb = _l.bounds(mask=wire.mask)
-            x = fingers*pitch + max(
-                contact_space - _ch_chbb.left,
-                -ch_wirebb.left,
-            )
-            y = -_ch_wirebb.bottom
-            l = layouter.place(_l, x=x, y=y)
-            ch_wirebb = l.bounds(mask=wire.mask)
-            ch_metalbb = l.bounds(mask=metal.mask)
+            prev_conn_net.childports += res_inst.ports["port1"]
+            conn_net.childports += res_inst.ports["port2"]
 
-            if ch_wirebb.left - _geo.epsilon > fingers*pitch:
-                shape = _geo.Rect.from_rect(rect=ch_wirebb, left=fingers*pitch)
-                layouter.add_wire(net=pin2, wire=wire, shape=shape)
-            if (metal.min_area is None) or ((ch_metalbb.area + _geo.epsilon) > metal.min_area):
-                shape = ch_metalbb
-            else:
-                width = tech.on_grid(metal.min_area/ch_metalbb.height, mult=2, rounding="ceiling")
-                shape = _geo.Rect.from_rect(rect=ch_metalbb, left=(ch_metalbb.right - width))
-            layouter.add_wire(net=pin2, wire=metal, pin=metalpin, shape=shape)
+            rot = _geo.Rotation.No if (i%2) == 0 else _geo.Rotation.MX
+            _res_lay = layouter.inst_layout(inst=res_inst, rotation=rot)
+            _res_polybb = _res_lay.bounds(mask=wire.mask)
 
-            # boundary
-            bb = _geo.Rect(
-                left=0.0, bottom=0.0, right=meander.bounds.right, top=meander.bounds.top,
-            )
-            layouter.layout.boundary = bb
-        else: # not is_meander
-            x = 0.0
-            prev_conn_net = pin1
-            prev_conn_mbb = None
-            for i in range(fingers):
-                if i == (fingers - 1):
-                    conn_net = pin2
-                else:
-                    conn_net = ckt.new_net(name=f"conn_{i}_{i+1}", external=False)
-                res_inst = ckt.instantiate(
-                    res_prim, name=f"res_fing[{i}]",
-                    width=spec.resvdd_w, length=spec.resvdd_lfinger,
-                )
-                prev_conn_net.childports += res_inst.ports["port1"]
-                conn_net.childports += res_inst.ports["port2"]
+            res_lay = layouter.place(_res_lay, x=(x - _res_polybb.left), y=(-_res_polybb.bottom))
+            res_lay_prevconn_mbb = res_lay.bounds(mask=metal.mask, net=prev_conn_net)
+            res_lay_conn_mbb = res_lay.bounds(mask=metal.mask, net=conn_net)
 
-                rot = _geo.Rotation.No if (i%2) == 0 else _geo.Rotation.MX
-                _res_lay = layouter.inst_layout(inst=res_inst, rotation=rot)
-                _res_polybb = _res_lay.bounds(mask=wire.mask)
+            if prev_conn_mbb is not None:
+                shape = _geo.Rect.from_rect(rect=prev_conn_mbb, right=res_lay_prevconn_mbb.right)
+                layouter.add_wire(net=prev_conn_net, wire=metal, shape=shape)
 
-                res_lay = layouter.place(_res_lay, x=(x - _res_polybb.left), y=(-_res_polybb.bottom))
-                res_lay_prevconn_mbb = res_lay.bounds(mask=metal.mask, net=prev_conn_net)
-                res_lay_conn_mbb = res_lay.bounds(mask=metal.mask, net=conn_net)
+            x += pitch
+            prev_conn_net = conn_net
+            prev_conn_mbb = res_lay_conn_mbb
 
-                if prev_conn_mbb is not None:
-                    shape = _geo.Rect.from_rect(rect=prev_conn_mbb, right=res_lay_prevconn_mbb.right)
-                    layouter.add_wire(net=prev_conn_net, wire=metal, shape=shape)
+        # Join implant and indicator layers
+        for prim in (*res_prim.indicator, *res_prim.implant):
+            layouter.add_portless(prim=prim, shape=layout.bounds(mask=prim.mask))
 
-                x += pitch
-                prev_conn_net = conn_net
-                prev_conn_mbb = res_lay_conn_mbb
+        pin1_mbb = layout.bounds(mask=metal.mask, net=pin1)
+        layouter.add_wire(net=pin1, wire=metal, pin=metalpin, shape=pin1_mbb)
+        pin2_mbb = layout.bounds(mask=metal.mask, net=pin2)
+        layouter.add_wire(net=pin2, wire=metal, pin=metalpin, shape=pin2_mbb)
 
-            # Join implant and indicator layers
-            for prim in (*res_prim.indicator, *res_prim.implant):
-                layouter.add_portless(prim=prim, shape=layout.bounds(mask=prim.mask))
-
-            pin1_mbb = layout.bounds(mask=metal.mask, net=pin1)
-            layouter.add_wire(net=pin1, wire=metal, pin=metalpin, shape=pin1_mbb)
-            pin2_mbb = layout.bounds(mask=metal.mask, net=pin2)
-            layouter.add_wire(net=pin2, wire=metal, pin=metalpin, shape=pin2_mbb)
-
-            layout.boundary = layout.bounds(mask=wire.mask)
+        layout.boundary = layout.bounds(mask=wire.mask)
 
 
 class _RCClampInverter(_cell._FactoryCell):
@@ -2293,10 +2195,11 @@ class _LevelUp(_cell._FactoryOnDemandCell):
             y=0, height=comp.minwidth_activewithcontact,
         )
         bb2 = l2.bounds(mask=nwell.mask)
+        nw_enc = spec.iopmos.computed.min_active_well_enclosure.max()
         shape = _geo.Rect(
-            left=min(bb1.left, bb2.left),
+            left=-nw_enc,
             bottom=min(bb1.bottom, bb2.bottom),
-            right=max(bb1.right, bb2.right),
+            right=(cells_right + nw_enc),
             top=spec.iorow_nwell_height,
         )
         layouter.add_wire(net=nets.iovdd, wire=nwell, shape=shape)
@@ -3179,10 +3082,11 @@ class _LevelUpInv(_cell._FactoryOnDemandCell):
             y=0, height=comp.minwidth_activewithcontact,
         )
         bb2 = l2.bounds(mask=nwell.mask)
+        nw_enc = spec.iopmos.computed.min_active_well_enclosure.max()
         shape = _geo.Rect(
-            left=min(bb1.left, bb2.left),
+            left=-nw_enc,
             bottom=min(bb1.bottom, bb2.bottom),
-            right=max(bb1.right, bb2.right),
+            right=(cells_right + nw_enc),
             top=spec.iorow_nwell_height,
         )
         layouter.add_wire(net=nets.iovdd, wire=nwell, shape=shape)
@@ -4356,7 +4260,7 @@ class _PadOut(_cell._FactoryOnDemandCell):
         )
         layouter.add_wire(net=net, wire=metal2, shape=shape)
 
-        # connec DCDiodes
+        # connect DCDiodes
         frame.connect_dcdiodes(
             layouter=layouter, pad=nets.pad,
             nclamp_lay = l_nclamp, pclamp_lay=l_pclamp,
@@ -4521,7 +4425,7 @@ class _PadTriOut(_cell._FactoryOnDemandCell):
         )
         layouter.add_wire(net=net, wire=metal2, shape=shape)
 
-        # connec DCDiodes
+        # connect DCDiodes
         frame.connect_dcdiodes(
             layouter=layouter, pad=nets.pad,
             nclamp_lay = l_nclamp, pclamp_lay=l_pclamp,
@@ -4668,7 +4572,7 @@ class _PadIn(_cell._FactoryOnDemandCell):
             shape = _geo.Rect.from_rect(rect=m2pin_bounds, bottom=pad_m2bb.top)
             l_padconn = layouter.add_wire(net=net, wire=metal2, shape=shape)
 
-        # connec DCDiodes
+        # connect DCDiodes
         frame.connect_dcdiodes(
             layouter=layouter, pad=nets.pad,
             nclamp_lay = l_nclamp, pclamp_lay=l_pclamp,
@@ -4885,7 +4789,7 @@ class _PadInOut(_cell._FactoryOnDemandCell):
         )
         layouter.add_wire(net=net, wire=metal2, shape=shape)
 
-        # connec DCDiodes
+        # connect DCDiodes
         frame.connect_dcdiodes(
             layouter=layouter, pad=nets.pad,
             nclamp_lay = l_nclamp, pclamp_lay=l_pclamp,
@@ -5042,7 +4946,7 @@ class _PadAnalog(_cell._FactoryOnDemandCell):
         shape = _geo.Rect(left=left, bottom=bottom, right=right, top=top)
         frame.add_corepin(layouter=layouter, net=nets.pad, m2_shape=shape)
 
-        # connec DCDiodes
+        # connect DCDiodes
         frame.connect_dcdiodes(
             layouter=layouter, pad=nets.pad,
             nclamp_lay = l_nclamp, pclamp_lay=l_pclamp,
@@ -5129,7 +5033,7 @@ class _PadIOVss(_cell._FactoryOnDemandCell):
             pclamp_lay=l_pclamp, ndio_lay=l_ndio, pdio_lay=l_pdio,
         )
 
-        # connec DCDiodes
+        # connect DCDiodes
         frame.connect_dcdiodes(
             layouter=layouter, pad=nets.iovss,
             nclamp_lay = l_nclamp, pclamp_lay=l_pclamp,
@@ -5330,7 +5234,7 @@ class _PadVss(_cell._FactoryOnDemandCell):
             pclamp_lay=l_pclamp, ndio_lay=l_ndio, pdio_lay=l_pdio,
         )
 
-        # connec DCDiodes
+        # connect DCDiodes
         frame.connect_dcdiodes(
             layouter=layouter, pad=nets.vss,
             nclamp_lay = l_nclamp, pclamp_lay=l_pclamp,

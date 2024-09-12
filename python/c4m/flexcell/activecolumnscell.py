@@ -904,6 +904,10 @@ class _ActiveColumn(_ElementsColumn[ActiveColumnElementT]):
         active = canvas._active
         nimplant = canvas._nimplant
         pimplant = canvas._pimplant
+        nwell = canvas._nwell
+        nwell_net = self.cell._nwell_net
+        pwell = canvas._pwell
+        pwell_net = self.cell._pwell_net
         poly = canvas._poly
 
         # Draw poly connection is needed
@@ -967,6 +971,7 @@ class _ActiveColumn(_ElementsColumn[ActiveColumnElementT]):
                 layouter.add_wire(
                     net=nsd.net, wire=active, shape=shape,
                     implant=nimplant, implant_enclosure=canvas._min_nsd_enc,
+                    well=pwell, well_net=pwell_net,
                 )
 
         if psd is not None:
@@ -1007,23 +1012,42 @@ class _ActiveColumn(_ElementsColumn[ActiveColumnElementT]):
                 layouter.add_wire(
                     net=psd.net, wire=active, shape=shape,
                     implant=pimplant, implant_enclosure=canvas._min_psd_enc,
+                    well=nwell, well_net=nwell_net,
                 )
 
         # connect the sd contacts
 
         if (nsd is not None) and nsd._has_contact:
-            cont = cast(SignalNSDT, nsd).contact
+            assert isinstance(nsd, SignalNSDT)
+            assert nsd._active_bottom is not None
+            cont = nsd.contact
             assert cont.is_placed
             actbb = cont._placed.bounds(mask=active.mask)
-            shape = _geo.Rect.from_rect(rect=actbb, bottom=nsd._active_bottom)
-            layouter.add_wire(net=cont.net, wire=active, shape=shape, implant=nimplant)
+            left = min(actbb.left, actbb.center.x - 0.5*ac_canvas._actcont_width)
+            right = max(actbb.right, actbb.center.x + 0.5*ac_canvas._actcont_width)
+            bottom = nsd._active_bottom
+            top = actbb.top
+            shape = _geo.Rect(left=left, bottom=bottom, right=right, top=top)
+            layouter.add_wire(
+                net=cont.net, wire=active, shape=shape, implant=nimplant,
+                well=pwell, well_net=pwell_net,
+            )
 
         if (psd is not None) and psd._has_contact:
-            cont = cast(SignalPSDT, psd).contact
+            assert isinstance(psd, SignalPSDT)
+            assert psd._active_top is not None
+            cont = psd.contact
             assert cont.is_placed
             actbb = cont._placed.bounds(mask=active.mask)
-            shape = _geo.Rect.from_rect(rect=actbb, top=psd._active_top)
-            layouter.add_wire(net=cont.net, wire=active, shape=shape, implant=pimplant)
+            left = min(actbb.left, actbb.center.x - 0.5*ac_canvas._actcont_width)
+            right = max(actbb.right, actbb.center.x + 0.5*ac_canvas._actcont_width)
+            bottom = actbb.bottom
+            top = psd._active_top
+            shape = _geo.Rect(left=left, bottom=bottom, right=right, top=top)
+            layouter.add_wire(
+                net=cont.net, wire=active, shape=shape, implant=pimplant,
+                well=nwell, well_net=nwell_net,
+            )
 ActiveColumnT = _ActiveColumn
 
 
@@ -1278,12 +1302,14 @@ class _M1Column(_ElementsColumn[M1ColumnElementT]):
 
         metal1 = canvas._metal1
         m1_halfw = 0.5*ac_canvas._m1row_width
-        m1_space = metal1.min_space
+        m1_space = canvas.min_m1_space
+        m1vss_space = canvas._min_m1vssrail_space
+        m1vdd_space = canvas._min_m1vddrail_space
 
         first: M1ColumnElementT = self[0]
         if len(self.bottom) == 0:
             if m1pin is not None:
-                bottom = canvas._m1_vssrail_width + m1_space
+                bottom = canvas._m1_vssrail_width + m1vss_space
             else:
                 bottom = first._y - m1_halfw
         else:
@@ -1292,7 +1318,7 @@ class _M1Column(_ElementsColumn[M1ColumnElementT]):
         if len(self.top) == 0:
             last: M1ColumnElementT = self[-1]
             if m1pin is not None:
-                top = canvas._cell_height - canvas._m1_vddrail_width - m1_space
+                top = canvas._cell_height - canvas._m1_vddrail_width - m1vdd_space
             else:
                 top = last._y + m1_halfw
         else:
@@ -1525,8 +1551,8 @@ class _Constraints:
 
         active = canvas._active
 
-        nact_top = canvas._well_edge_height - ac_canvas._min_nact_well_enclosure
-        pact_bottom = canvas._well_edge_height + ac_canvas._min_pact_well_enclosure
+        nact_top = canvas._well_edge_height - ac_canvas._min_nact_nwell_space
+        pact_bottom = canvas._well_edge_height + ac_canvas._min_pact_nwell_enclosure
         if self._n_polyrows > 0:
             active = canvas._active
             contact = canvas._contact
@@ -1583,7 +1609,7 @@ class _Constraints:
         active = canvas._active
         metal1 = canvas._metal1
 
-        dpoly_etch = 0.5*(ac_canvas._polyrow_width - ac_canvas._m1row_width) - metal1.min_space
+        dpoly_etch = 0.5*(ac_canvas._polyrow_width - ac_canvas._m1row_width) - canvas.min_m1_space
         m1_top_max = self._poly_bottom + dpoly_etch
         m1_bottom_min = self._poly_top - dpoly_etch
         for i, actcol in enumerate(self.activecolumns):
@@ -1687,7 +1713,7 @@ class _Constraints:
             if nsd is not None:
                 if isinstance(nsd, SignalNSDT):
                     if nsd.with_contact:
-                        nsd._set_m1_bottom(v=(canvas._m1_vssrail_width + metal1.min_space))
+                        nsd._set_m1_bottom(v=(canvas._m1_vssrail_width + canvas._min_m1vssrail_space))
                         assert nsd._active_top is not None
                         if m1_top_max < nsd._active_top:
                             nsd._set_m1_top(v=m1_top_max)
@@ -1705,7 +1731,7 @@ class _Constraints:
                 if isinstance(psd, SignalPSDT):
                     if psd.with_contact:
                         psd._set_m1_top(
-                            v=(canvas._cell_height - canvas._m1_vddrail_width - metal1.min_space),
+                            v=(canvas._cell_height - canvas._m1_vddrail_width - canvas._min_m1vddrail_space),
                         )
                         assert psd._active_bottom is not None
                         if m1_bottom_min > psd._active_bottom:
@@ -1984,8 +2010,8 @@ class _ActiveColumnsCanvas:
         canvas = fab.canvas
         tech = canvas.tech
 
-        pwell = canvas._pwell
-        nwell = canvas._nwell
+        # originally this assumed that PMOS was in a nwell and NMOS in substrate
+        # therefor the properties computed here are referenced to nwell.
         active = canvas._active
         poly = canvas._poly
         contact = canvas._contact
@@ -2023,8 +2049,9 @@ class _ActiveColumnsCanvas:
         self._nact_bottom = vss_sd_act_bb.bottom + self._vss_sd_y
         self._pact_top = vdd_sd_act_bb.top + self._vdd_sd_y
 
-        self._actcont_width = tech.computed.min_width(
-            active, up=True, min_enclosure=True,
+        self._actcont_width = max(
+            canvas._min_active_width,
+            tech.computed.min_width(active, up=True, min_enclosure=True),
         )
         self._actcont_height = tech.computed.min_width(
             active, up=True, min_enclosure=False,
@@ -2050,12 +2077,12 @@ class _ActiveColumnsCanvas:
             pass
         else:
             dx_poly = max(dx_poly, -0.5*canvas._min_active_space + s + 0.5*self._polycont_width)
-        dx_m1 = 0.5*metal1.min_space + 0.5*self._m1col_width
+        dx_m1 = 0.5*canvas.min_m1_space + 0.5*self._m1col_width
         self._firstcol_dx = tech.on_grid(
             max(dx_act, dx_poly, dx_m1), rounding="ceiling",
         )
 
-        p = self._m1row_width + metal1.min_space
+        p = self._m1row_width + canvas.min_m1_space
         # The y of m1 row maybe used to place sd contact above poly contact
         # ensure that the m1 pitch does account for that
         try:
@@ -2073,7 +2100,7 @@ class _ActiveColumnsCanvas:
             # to the minimum m1 row pitch
             self._min_m1row_pitch,
         )
-        self._min_m1col_pitch = self._m1col_width + metal1.min_space
+        self._min_m1col_pitch = self._m1col_width + canvas.min_m1_space
         self._min_polycont_hpitch = tech.computed.min_pitch(
             poly, up=True, min_enclosure=False,
         )
@@ -2096,8 +2123,7 @@ class _ActiveColumnsCanvas:
             tech.on_grid(
                 0.5*l
                 + canvas._min_active_poly_space
-                + canvas._min_contact_active_enclosure.min()
-                + 0.5*contact.width,
+                + 0.5*self._actcont_width,
                 rounding="ceiling",
             ),
         )
@@ -2107,20 +2133,7 @@ class _ActiveColumnsCanvas:
             rounding="ceiling",
         )
 
-        if (pwell is None) or (pwell not in active.well):
-            if active.min_substrate_enclosure is None:
-                raise NotImplementedError(
-                    f"Active layer '{active.name}' without `min_substrate_enclsoure` propoerty",
-                )
-            enc = active.min_substrate_enclosure.max()
-        else:
-            idx = active.well.index(pwell)
-            enc = active.min_well_enclosure[idx]
-            if enc is None:
-                raise NotImplementedError(
-                    f"No enclosure given for well '{pwell.name}' over active '{active.name}'",
-                )
-            enc = enc.max()
+        enc = canvas._min_active_nwell_space
         if canvas._min_nsd_enc is not None:
             enc = max(enc, canvas._min_nsd_enc.second)
         if canvas._pimplant is not None:
@@ -2131,22 +2144,9 @@ class _ActiveColumnsCanvas:
                 pass
             else:
                 enc = max(enc, s)
-        self._min_nact_well_enclosure = enc
+        self._min_nact_nwell_space = enc
 
-        if (nwell is None) or (nwell not in active.well):
-            if active.min_substrate_enclosure is None:
-                raise NotImplementedError(
-                    f"Active layer '{active.name}' without `min_substrate_enclsoure` propoerty",
-                )
-            self._min_pact_well_enclosure = active.min_substrate_enclosure.max()
-        else:
-            idx = active.well.index(nwell)
-            enc = active.min_well_enclosure[idx]
-            if enc is None:
-                raise NotImplementedError(
-                    f"No enclosure given for well '{nwell.name}' over active '{active.name}'",
-                )
-            enc = enc.max()
+        enc = canvas._min_active_nwell_enclosure
         if canvas._min_psd_enc is not None:
             enc = max(enc, canvas._min_psd_enc.second)
         if canvas._nimplant is not None:
@@ -2157,12 +2157,12 @@ class _ActiveColumnsCanvas:
                 pass
             else:
                 enc = max(enc, s)
-        self._min_pact_well_enclosure = enc
+        self._min_pact_nwell_enclosure = enc
 
         # Set mid hieght of cell in middle of nact top and pact bottom
         self._midrow_height = tech.on_grid(
             canvas._well_edge_height
-            + 0.5*(self._min_pact_well_enclosure - self._min_nact_well_enclosure)
+            + 0.5*(self._min_pact_nwell_enclosure - self._min_nact_nwell_space)
         )
 
 
@@ -2232,7 +2232,7 @@ class ActiveColumnsCellFrame(_Cell):
         active = canvas._active
         contact = canvas._contact
 
-        tap_height = tech.computed.min_width(active, up=True, min_enclosure=True)
+        tap_height = ac_canvas._actcont_width
 
         # ptap
         act_left = 0.5*canvas._min_active_space

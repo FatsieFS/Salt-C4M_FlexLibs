@@ -85,6 +85,10 @@ class _Tie(_acc.ActiveColumnsCellFrame):
         active = canvas._active
         nimplant = canvas._nimplant
         pimplant = canvas._pimplant
+        nwell = canvas._nwell
+        nwell_net = self.nwell_net
+        pwell = canvas._pwell
+        pwell_net = self.pwell_net
         poly = canvas._poly
         contact = canvas._contact
         metal1 = canvas._metal1
@@ -104,7 +108,7 @@ class _Tie(_acc.ActiveColumnsCellFrame):
                 vdd_dio_tap_bb = self.vddtap_lay.bounds(mask=active.mask)
                 left = 0.5*poly.min_space
                 try:
-                    s = tech.computed.min_space(active, poly)
+                    s = min_actpoly_space
                 except:
                     pass
                 else:
@@ -135,86 +139,51 @@ class _Tie(_acc.ActiveColumnsCellFrame):
         else: # max_diff == True
             args: Dict[str, Any]
 
+            act_w = cell_width + canvas._min_active_space - 2*canvas._min_nactive_pactive_space
+            if act_w + _geo.epsilon < active.min_width:
+                raise NotEnoughRoom(f"maximum Tie with w == {width}")
+
             # extend vss tap
-            top = canvas._well_edge_height - ac_canvas._min_nact_well_enclosure
-            s = 0.5*canvas._min_active_space
+            top = canvas._well_edge_height - ac_canvas._min_nact_nwell_space
             if pimplant is not None:
                 idx = active.implant.index(pimplant)
                 enc = active.min_implant_enclosure[idx].tall()
                 args = {"implant_enclosure": enc}
-                s = max(s, enc.first)
-                if (s - _geo.epsilon) > enc.first:
-                    enc = _prp.Enclosure((s, enc.second))
                 top = min(top, canvas._well_edge_height - pimplant.min_space - enc.second)
             else:
                 assert nimplant is not None
-                enc = None
                 args = {}
-                s = max(
-                    s, tech.computed.min_space(primitive1=active, primitive2=nimplant),
-                )
-            if nimplant is not None:
-                impl_bb = self.vddtap_lay.bounds(mask=nimplant.mask)
-                ext = max(0.0, -impl_bb.left)
-            else:
-                assert pimplant is not None
-                ext = max(
-                    0.0,
-                    tech.computed.min_space(
-                        primitive1=active, primitive2=pimplant
-                    ) - 0.5*canvas._min_active_space
-                )
-            act_w = cell_width - 2*ext - 2*s
-            if act_w + _geo.epsilon < active.min_width:
-                raise NotEnoughRoom(f"maximum Tie with w == {width}")
             bottom = 0.5*canvas._min_active_space
             shape = _geo.Rect(
                 left=0.5*(cell_width - act_w), bottom=bottom,
                 right=0.5*(cell_width + act_w), top=top,
             )
             layouter.add_wire(
-                net=vss, wire=active, shape=shape, implant=pimplant, **args,
+                net=vss, wire=active, shape=shape, implant=pimplant,
+                well=pwell, well_net=pwell_net,
+                **args,
             )
 
             # extend vdd tap
-            bottom = canvas._well_edge_height + ac_canvas._min_pact_well_enclosure
-            s = 0.5*canvas._min_active_space
+            bottom = canvas._well_edge_height + ac_canvas._min_pact_nwell_enclosure
             if nimplant is not None:
                 idx = active.implant.index(nimplant)
                 enc = active.min_implant_enclosure[idx].tall()
                 args = {"implant_enclosure": enc}
-                s = max(s, enc.first)
-                if (s - _geo.epsilon) > enc.first:
-                    enc = _prp.Enclosure((s, enc.second))
                 bottom = max(bottom, canvas._well_edge_height + nimplant.min_space + enc.second)
             else:
                 assert pimplant is not None
                 enc = None
                 args = {}
-                s = max(
-                    s, tech.computed.min_space(primitive1=active, primitive2=pimplant),
-                )
-            if pimplant is not None:
-                impl_bb = self.vsstap_lay.bounds(mask=pimplant.mask)
-                ext = max(0.0, -impl_bb.left)
-            else:
-                assert nimplant is not None
-                ext = max(
-                    0.0,
-                    tech.computed.min_space(
-                        primitive1=active, primitive2=nimplant
-                    ) - 0.5*canvas._min_active_space
-                )
-            act_w = cell_width - 2*ext - 2*s
-            if act_w + _geo.epsilon < active.min_width:
-                raise NotEnoughRoom(f"maximum Tie with w == {width}")
             top = canvas._cell_height - 0.5*canvas._min_active_space
             shape = _geo.Rect(
                 left=0.5*(cell_width - act_w), bottom=bottom,
                 right=0.5*(cell_width + act_w), top=top,
             )
             layouter.add_wire(
-                net=vdd, wire=active, shape=shape, implant=nimplant, **args,
+                net=vdd, wire=active, shape=shape, implant=nimplant,
+                well=nwell, well_net=nwell_net,
+                **args,
             )
 
 
@@ -222,10 +191,11 @@ class _Diode(_acc.ActiveColumnsCellFrame):
     def __init__(self, *,
         fab: "StdCellFactory", name: str,
     ):
+        super().__init__(fab=fab, name=name)
+
         canvas = fab.canvas
         tech = fab.tech
-
-        super().__init__(fab=fab, name=name)
+        ac_canvas = self.ac_canvas
 
         cell_width = canvas._cell_horplacement_grid
         self.set_width(width=cell_width)
@@ -246,43 +216,38 @@ class _Diode(_acc.ActiveColumnsCellFrame):
 
         i_ = ckt.new_net(name="i", external=True)
 
-        min_actwell_space = tech.computed.min_space(primitive1=active, primitive2=nwell)
-        if nimplant is not None:
-            try:
-                s = tech.computed.min_space(primitive1=active.in_(nimplant), primitive2=nwell)
-            except:
-                pass
-            else:
-                min_actwell_space = max(min_actwell_space, s)
-        enc = active.min_substrate_enclosure
-        if enc is not None:
-            min_actwell_space = max(min_actwell_space, enc.max())
-
         # Min active space without implants overlapping
         vss_tap_act_bb = self.vsstap_lay.bounds(mask=active.mask)
         vdd_tap_act_bb = self.vddtap_lay.bounds(mask=active.mask)
 
+        bottom_width = max(
+            tech.computed.min_width(active, up=True, down=False, min_enclosure=True),
+            canvas._min_active_width,
+        )
+
         # ndiode
         bottom = max(
             vss_tap_act_bb.top + canvas._min_nactive_pactive_space_maxenc,
-            canvas._m1_vssrail_width + metal1.min_space,
+            canvas._m1_vssrail_width + canvas.min_m1_space,
         )
-        top = canvas._well_edge_height - min_actwell_space
+        top = canvas._well_edge_height - canvas._min_active_nwell_space
         h = tech.on_grid(top - bottom, mult=2, rounding="floor")
         vss_dio_x = 0.5*cell_width
         vss_dio_y = bottom + 0.5*h
         vss_dio_lay = layouter.add_wire(
             net=i_, well_net=pwell_net, wire=contact,
             bottom=active, bottom_implant=nimplant, bottom_well=pwell,
-            x=vss_dio_x, y=vss_dio_y, bottom_height=h, top_height=h,
+            x=vss_dio_x, y=vss_dio_y,
+            bottom_width=bottom_width, bottom_height=h, bottom_enclosure="tall",
+            top_height=h,
         )
         vss_dio_m1_bb = vss_dio_lay.bounds(mask=metal1.mask)
 
         # pdiode
-        bottom = canvas._well_edge_height + canvas._min_active_well_enclosure
+        bottom = canvas._well_edge_height + canvas._min_active_nwell_enclosure
         top = min(
             vdd_tap_act_bb.bottom - canvas._min_nactive_pactive_space_maxenc,
-            canvas._cell_height - canvas._m1_vddrail_width - metal1.min_space,
+            canvas._cell_height - canvas._m1_vddrail_width - canvas.min_m1_space,
         )
         h = tech.on_grid(top - bottom, mult=2, rounding="floor")
         vdd_dio_x = 0.5*cell_width
@@ -290,7 +255,9 @@ class _Diode(_acc.ActiveColumnsCellFrame):
         vdd_dio_lay = layouter.add_wire(
             net=i_, well_net=nwell_net, wire=contact,
             bottom=active, bottom_implant=pimplant, bottom_well=nwell,
-            x=vdd_dio_x, y=vdd_dio_y, bottom_height=h, top_height=h,
+            x=vdd_dio_x, y=vdd_dio_y,
+            bottom_width=bottom_width, bottom_height=h, bottom_enclosure="tall",
+            top_height=h,
         )
         vdd_dio_m1_bb = vdd_dio_lay.bounds(mask=metal1.mask)
 
@@ -2032,14 +1999,14 @@ class _nRnSLatch(_acc.ActiveColumnsCell):
         q_nmos = self.nmos(name="q_nmos", net=q, w_size=w_size)
         q_pmos = self.pmos(name="q_pmos", net=q, w_size=w_size)
 
-        nq_nmos = self.nmos(name="nq_nmos", net=q, w_size=w_size)
-        nq_pmos = self.pmos(name="nq_pmos", net=q, w_size=w_size)
+        nq_nmos = self.nmos(name="nq_nmos", net=nq, w_size=w_size)
+        nq_pmos = self.pmos(name="nq_pmos", net=nq, w_size=w_size)
 
         nset_nmos = self.nmos(name="nset_nmos", net=nset, w_size=w_size)
         nset_pmos = self.pmos(name="nset_pmos", net=nset, w_size=w_size)
 
-        nrst_nmos = self.nmos(name="nrst_nmos", net=nset, w_size=w_size)
-        nrst_pmos = self.pmos(name="nrst_pmos", net=nset, w_size=w_size)
+        nrst_nmos = self.nmos(name="nrst_nmos", net=nrst, w_size=w_size)
+        nrst_pmos = self.pmos(name="nrst_pmos", net=nrst, w_size=w_size)
 
         ### poly knots
 
@@ -3167,12 +3134,17 @@ class _Gallery(_fab.FactoryCell["StdCellFactory"]):
 
         canvas = fab.canvas
 
+        m1 = canvas._metal1
+        m1pin = canvas._metal1pin
+        via = canvas._via1
+        m2 = canvas._metal2
+
         super().__init__(name=name, fab=fab)
 
         ckt = self.new_circuit()
         layouter = self.new_circuitlayouter()
 
-        l = len(cells)
+        n_cells = len(cells)
 
         cells2 = tuple(reversed(cells))
 
@@ -3180,10 +3152,10 @@ class _Gallery(_fab.FactoryCell["StdCellFactory"]):
         def shuffled_i(i: int) -> int:
             is_odd = (i%2) == 1
             if not is_odd:
-                return l - (i//2) - 1
+                return n_cells - (i//2) - 1
             else:
                 return (i//2)
-        cells3 = tuple(cells[shuffled_i(i)] for i in range(l))
+        cells3 = tuple(cells[shuffled_i(i)] for i in range(n_cells))
 
         vss_ports = []
         vdd_ports = []
@@ -3198,7 +3170,7 @@ class _Gallery(_fab.FactoryCell["StdCellFactory"]):
                     vdd_ports.append(port)
                 else:
                     ckt.new_net(
-                        name=f"{inst.name}.{port,name}", external=False, childports=port,
+                        name=f"{inst.name}.{port.name}", external=False, childports=port,
                     )
 
             layouter.place(inst, x=x0, y=0.0)
@@ -3214,7 +3186,7 @@ class _Gallery(_fab.FactoryCell["StdCellFactory"]):
                     vdd_ports.append(port)
                 else:
                     ckt.new_net(
-                        name=f"{inst.name}.{port,name}", external=False, childports=port,
+                        name=f"{inst.name}.{port.name}", external=False, childports=port,
                     )
 
             layouter.place(inst, x=x1, y=0.0, rotation=_geo.Rotation.MX)
@@ -3230,14 +3202,74 @@ class _Gallery(_fab.FactoryCell["StdCellFactory"]):
                     vdd_ports.append(port)
                 else:
                     ckt.new_net(
-                        name=f"{inst.name}.{port,name}", external=False, childports=port,
+                        name=f"{inst.name}.{port.name}", external=False, childports=port,
                     )
 
             layouter.place(inst, x=x2, y=2*canvas._cell_height, rotation=_geo.Rotation.MX)
             x2 += cast(_Cell, cell3).width
 
-        ckt.new_net(name="vss", external=True, childports=vss_ports)
-        ckt.new_net(name="vdd", external=True, childports=vdd_ports)
+        vss = ckt.new_net(name="vss", external=True, childports=vss_ports)
+        vdd = ckt.new_net(name="vdd", external=True, childports=vdd_ports)
+
+        # Put labels for vss pin
+        bottom = -canvas._m1_vssrail_width
+        top = canvas._m1_vssrail_width
+        shape = _geo.Rect(left=0.0, bottom=bottom, right=x0, top=top)
+        layouter.add_wire(net=vss, wire=m1, pin=m1pin, shape=shape)
+        _l = layouter.wire_layout(
+            net=vss, wire=via, bottom_height=2*canvas._m1_vssrail_width,
+        )
+        _m1bb = _l.bounds(mask=m1.mask)
+        l = layouter.place(_l,
+            x=-_m1bb.left, y=(bottom - _m1bb.bottom),
+        )
+        via_m2bb1 = l.bounds(mask=m2.mask)
+
+        bottom = 2*canvas._cell_height - canvas._m1_vssrail_width
+        top = 2*canvas._cell_height
+        shape = _geo.Rect(left=0.0, bottom=bottom, right=x0, top=top)
+        layouter.add_wire(net=vss, wire=m1, pin=m1pin, shape=shape)
+        _l = layouter.wire_layout(
+            net=vss, wire=via, bottom_height=canvas._m1_vssrail_width,
+        )
+        _m1bb = _l.bounds(mask=m1.mask)
+        l = layouter.place(_l,
+            x=-_m1bb.left, y=(bottom - _m1bb.bottom),
+        )
+        via_m2bb2 = l.bounds(mask=m2.mask)
+
+        shape = _geo.Rect.from_rect(rect=via_m2bb1, top=via_m2bb2.top)
+        layouter.add_wire(net=vss, wire=m2, shape=shape)
+
+        # Put labels for vdd pin
+        bottom = -canvas._cell_height
+        top = -canvas._cell_height + canvas._m1_vddrail_width
+        shape = _geo.Rect(left=0.0, bottom=bottom, right=x0, top=top)
+        layouter.add_wire(net=vdd, wire=m1, pin=m1pin, shape=shape)
+        _l = layouter.wire_layout(
+            net=vdd, wire=via, bottom_height=canvas._m1_vddrail_width,
+        )
+        _m1bb = _l.bounds(mask=m1.mask)
+        l = layouter.place(_l,
+            x=(x0 - _m1bb.right), y=(bottom - _m1bb.bottom),
+        )
+        via_m2bb1 = l.bounds(mask=m2.mask)
+
+        bottom = canvas._cell_height - canvas._m1_vddrail_width
+        top = canvas._cell_height + canvas._m1_vddrail_width
+        shape = _geo.Rect(left=0.0, bottom=bottom, right=x0, top=top)
+        layouter.add_wire(net=vdd, wire=m1, pin=m1pin, shape=shape)
+        _l = layouter.wire_layout(
+            net=vdd, wire=via, bottom_height=2*canvas._m1_vddrail_width,
+        )
+        _m1bb = _l.bounds(mask=m1.mask)
+        l = layouter.place(_l,
+            x=(x0 - _m1bb.right), y=(bottom - _m1bb.bottom),
+        )
+        via_m2bb2 = l.bounds(mask=m2.mask)
+
+        shape = _geo.Rect.from_rect(rect=via_m2bb1, top=via_m2bb2.top)
+        layouter.add_wire(net=vdd, wire=m2, shape=shape)
 
         # Set boundary
         assert abs(x0 - x1) < _geo.epsilon, "Internal error"
