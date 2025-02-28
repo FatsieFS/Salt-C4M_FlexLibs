@@ -1866,33 +1866,70 @@ class _Constraints:
         cell = self.m1rows[0].cell
         ac_canvas = cell.ac_canvas
 
-        prev: Optional[MultiM1RowT] = None
+        bot_y = None
+        top_y = None
+        bot_rows: List[MultiM1RowT] = []
+        mid_rows: List[MultiM1RowT] = []
+        top_rows: List[MultiM1RowT] = []
+        for mrow in self.m1rows:
+            is_bot = False
+            is_top = False
+            for elem in chain(*mrow):
+                if isinstance(elem, SignalNSDT):
+                    # Assume contact only on smallest active width
+                    mrow._y = elem._y
+                    bot_y = elem._y if bot_y is None else min(bot_y, elem._y)
+                    break
+                elif isinstance(elem, SignalPSDT):
+                    # Assume contact only on smallest active width
+                    mrow._y = elem._y
+                    top_y = elem._y if top_y is None else max(top_y, elem._y)
+                    break
+                elif isinstance(elem, SignalSDContactT):
+                    is_bot = isinstance(elem.sd, SignalNSDT)
+                    is_top = isinstance(elem.sd, SignalPSDT)
+            else:
+                if any(isinstance(elem, PolyContactT) and elem._has_y for elem in chain(*mrow)):
+                    mid_rows.append(mrow)
+                elif is_bot:
+                    assert not is_top
+                    bot_rows.append(mrow)
+                elif is_top:
+                    top_rows.append(mrow)
+                else:
+                    mid_rows.append(mrow)
+
+        for mrow in bot_rows:
+            assert bot_y is not None
+            bot_y += ac_canvas._min_m1row_pitch
+            mrow._y = bot_y
+
         todo: List[MultiM1RowT] = []
-        for multim1row in self.m1rows:
-            y = None
-            for elem in chain(*multim1row):
-                if isinstance(elem, (SignalNSDT, SignalPSDT)):
-                    y = elem._y
+        prev_y: Optional[float] = None
+        for mrow in mid_rows:
+            for elem in chain(*mrow):
+                if isinstance(elem, PolyContactT) and elem._has_y:
+                    prev_y = mrow._y = elem._y
+                    assert prev_y is not None
+                    for i, mrow2 in enumerate(reversed(todo)):
+                        mrow2._y = prev_y - (i + 1)*ac_canvas._min_m1row_pitch
+                    todo = []
                     break
-                elif (isinstance(elem, PolyContactT) and elem._has_y):
-                    y = elem._y
-                    break
-            if y is None:
-                if prev is None:
-                    todo.append(multim1row)
-                    continue
-                y = prev._y + ac_canvas._min_m1row_pitch
-            multim1row._y = y
-            for i, multim1row2 in enumerate(reversed(todo)):
-                multim1row2._y = (y - (i + 1)*ac_canvas._min_m1row_pitch)
-            todo = []
-            prev=multim1row
-        # If todo is not empty it means that only rows are present without a _y value
-        # Center the rows then arouned midheight of the cell
+            else:
+                if prev_y is not None:
+                    prev_y += ac_canvas._min_m1row_pitch
+                    mrow._y = prev_y
+                else:
+                    todo.append(mrow)
         n = len(todo)
         y0 = ac_canvas._midrow_height - 0.5*(n - 1)*ac_canvas._min_m1row_pitch
-        for i, multim1row in enumerate(todo):
-            multim1row._y = y0 + i*ac_canvas._min_m1row_pitch
+        for i, mrow in enumerate(todo):
+            mrow._y = y0 + i*ac_canvas._min_m1row_pitch
+
+        for mrow in reversed(top_rows):
+            assert top_y is not None
+            top_y -= ac_canvas._min_m1row_pitch
+            mrow._y = top_y
 
     async def _place_m1cols(self) -> None:
         # self.log("_place_m1cols(): enter")

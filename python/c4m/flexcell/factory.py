@@ -3103,8 +3103,12 @@ class _DFFnR(_acc.ActiveColumnsCell):
                 nrst_m1row.multim1row,
                 clk_buf_m1row.multim1row,
                 clk_buf_pmos1m1row.multim1row,
+                clk_buf_pmos0m1row.multim1row,
+                # Put y_m1row1, dff_s_m1row on separate row to put them as high as possible
+                # This is relying on internal fact that multirow without a poly contact
+                # but with a SignalSDContactT should be separate row to them as high as possible.
                 self.multim1row(
-                    name="pmosm1row", rows=(clk_buf_pmos0m1row, y_m1row1, dff_s_m1row),
+                    name="pmosm1row", rows=(y_m1row1, dff_s_m1row),
                 ),
                 self.multim1row(name="psdmrow", rows=(
                     u_psdrow, dff_m_psdrow, y_psdrow, net5_psdrow,
